@@ -1,0 +1,382 @@
+<html>
+
+<head>
+
+  <!-- when displayed within the mturk window, the url of your experiment will include parameters, e.g.,
+	https://scorsese.wjh.harvard.edu/turk/experiments/gaa/oops/?assignmentId=3K5TEWLKGVBYBE70241OAAC6EUGVI8&hitId=3E24UO25QZQL5Q589P1KUWXBXF76O5&workerId=A2Y2LYHBO1ZJF5&turkSubmitTo=https%3A%2F%2Fworkersandbox.mturk.com
+ -->
+
+  <!-- jQuery and jQuery plugins -->
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+  <script src="js/jquery.path.js"></script>
+  <script src="js/sweetalert.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="css/sweetalert.css">
+
+  <!-- Always include jQuery, Tim Turk Tools, experiment.css. Use https:// since
+	   this code will execute within the context of https://mturk.com, and browsers
+		 will give warnings for any access to non-https resources: -->
+
+  <!-- <script src="https://timbrady.org/turk/TimTurkTools.js"></script> -->
+  <script src="https://scorsese.wjh.harvard.edu/turk/tools/TimTurkToolsPlus.js"></script>
+
+  <!-- Bootstrap -->
+  <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/js/bootstrap.min.js"></script>
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
+  <!-- <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap-theme.min.css"> -->
+
+  <!-- Experiment styles -->
+  <link rel="stylesheet" type="text/css" href="css/experiment.css">
+
+  <script>
+
+    var AssignmentId;
+
+    /* When the document is ready, do some things: 
+      -------------------------------------------- */
+    $(document).ready(function () {
+
+      AssignmentId = GetAssignmentId();
+
+      /* Set the assignment ID hidden input to the Turk assignment ID (required by Turk): */
+      $('#assignmentId').val(AssignmentId);
+
+      /* NONE = testing in browser; ASSIGNMENT_ID_NOT_AVAILABLE=on turk, but hasn't accepted the hit; otherwise, hit accepted */
+      if (!IsOnTurk() && AssignmentId == "NONE") {
+        AssignmentId = prompt("Doesn't look like you are on Turk, so you're probably testing. Enter an ID to save your data with:", "assignmentId");
+      } else if (AssignmentId == "ASSIGNMENT_ID_NOT_AVAILABLE") {
+        $("a.startExperimentButton").addClass('disabled');
+        $("[data-toggle='tooltip']").tooltip();
+      } else {
+        $("a.startExperimentButton").removeClass('disabled');
+        $("[data-toggle='tooltip']").tooltip('destroy');
+      }
+
+      /* set the submit location to either "actual mturk" or "sandbox" */
+      $("#turkSubmit").attr('action', GetSubmitLocation());
+
+    });
+
+    /* Set up all the general variables: 
+      -------------------------------------------- */
+
+    // assuming your data are in /experiments/<experimenter>/<experiment>
+    // if you want this same code to work on the server and on your local machine,
+    // make sure to use this folder structure, e.g., /experiments/gaa/Demo1
+
+    var pathParts = window.location.pathname.split("/");
+    var tmpIndex = pathParts.indexOf("experiments");
+    var experimenter = pathParts[tmpIndex + 1];
+    var experimentName = pathParts[tmpIndex + 2];
+    var server = 'https://scorsese.wjh.harvard.edu';
+    var startExperimentTime = new Date(); //time page was loaded
+    var trialStruct = Shuffle(GenerateTrials()); // the list of trials to show
+    var curTrial = 0; //current trial, 0-indexed
+
+    /* Generate a trialStruct: 
+      -------------------------------------------- */
+    function GenerateTrials() {
+      var numTrialsPerCond = 1; // 16
+      var trialStruct = [];
+      var colors = ['#FF0000', '#0000FF', '#FFFF00', '#00FF00', '#87CEFA', '#FE9A2E', '#FF00FF'];
+      var condDescription = ['same objects', 'same locations', 'wrong'];
+      for (var i = 0; i < 3; i++) { // for each condition...
+        for (var j = 0; j < numTrialsPerCond; j++) { // generate numTrialsPerCond
+          /* First lets shuffle the order of the colors and then take the first 3: */
+          var colorOrder = Shuffle(colors);
+          var colorChoice = [colorOrder[0], colorOrder[1], colorOrder[2]];
+          /* Now lets counterbalance whether there will be a change and which
+            item will change if it does change: */
+          var whichDifferent = j % 3;
+          var isSame = j % 2;
+
+          /* Ok, lets generate the colors that will appear in the 'post-change' condition: */
+          var colorChoicePost = colorChoice.slice(0); // copy the vector by value
+          if (!isSame) {
+            colorChoicePost[whichDifferent] = colorOrder[3];
+          }
+          /* ... and rearrange their positions depending on the condition: */
+          if (i == 0) {
+            // condition 0 == appear on the same objects
+            colorChoicePost = [colorChoicePost[2], colorChoicePost[0], colorChoicePost[1]];
+          } else if (i == 1) {
+            // condition 1 == appear in the same locations
+            colorChoicePost = [colorChoicePost[0], colorChoicePost[1], colorChoicePost[2]];
+          } else if (i == 2) {
+            // appear in entirely wrong spots
+            colorChoicePost = [colorChoicePost[1], colorChoicePost[2], colorChoicePost[0]];
+          }
+
+          /* Now lets push it all into the trialStruct: */
+          trialStruct.push({
+            'cond': i,
+            'condDescription': condDescription[i],
+            'isSame': j % 2,
+            'whichDifferent': j % 3,
+            'colors': colorChoice,
+            'foilColor': colorOrder[3],
+            'colorsPostChange': colorChoicePost
+          });
+        }
+      }
+      return trialStruct;
+    }
+
+    /* They clicked the start experiment button: */
+    function StartExperiment() {
+      $('#instructions').hide();
+      $('#task').show();
+      //check if on turk and previewing and dont let them do this:
+      ShowTrial();
+    }
+
+    /* Show the current trial (available in global variable curTrial): */
+    function ShowTrial() {
+      /* Start by showing the 'press a key...' prompt and waiting for a keypress: */
+      $('#startTrial').show();
+      $(document).bind("keypress.start", function (e) {
+        $(document).unbind("keypress.start"); //immediately stop looking for keys
+        $('#startTrial').hide(); //and hide the prompt
+
+        /* Ensure all the circles are not colored: */
+        $('.circle').css({ 'background': 'none' });
+
+        /* After 1000ms, color the circles appropriately: */
+        setTimeout(function () {
+          $('#circle1').css({ 'background': trialStruct[curTrial].colors[0] });
+          $('#circle2').css({ 'background': trialStruct[curTrial].colors[1] });
+          $('#circle3').css({ 'background': trialStruct[curTrial].colors[2] });
+        }, 1000);
+
+        /* Then 1000ms later (after 2000ms), blank them and animate them: */
+        setTimeout(function () {
+          $('.circle').css({ 'background': 'none' });
+          /* This uses the jquery.path toolbox to animate in a circular arc. 
+              Only the start: and end: angles differ for the different circles: */
+          $("#circle1").animate({
+            path: new $.path.arc({
+              center: [160, 160], radius: 90, start: 180,
+              end: 60, dir: -1
+            })
+          }, 2000); //take 2000ms
+          $("#circle2").animate({
+            path: new $.path.arc({
+              center: [160, 160], radius: 90, start: 60,
+              end: -60, dir: -1
+            })
+          }, 2000);
+          $("#circle3").animate({
+            path: new $.path.arc({
+              center: [160, 160], radius: 90, start: -60,
+              end: -180, dir: -1
+            })
+          }, 2000);
+        }, 2000);
+
+        /* The circles should stop animating 4000ms after the trial started, so at 5000ms,
+          show their post-change colors and wait for a key press: */
+        setTimeout(function () {
+          /* Reset their positions to the same spots they always start the trial at.
+              Note that our convention here is that circle1 is always at the top, even
+              after we have rotated the circles. The rotation is just for visual purposes,
+              not for code. So if we show the same colors in .colorsPostChange as in .colors,
+              we get a "same locations" trial, not a "same objects" trial: */
+          $('#circle1').css({ top: "70px", left: "160px" });
+          $('#circle2').css({ top: "205px", left: "238px" });
+          $('#circle3').css({ top: "205px", left: "82px" });
+
+          // Set colors:
+          $('#circle1').css({ 'background': trialStruct[curTrial].colorsPostChange[0] });
+          $('#circle2').css({ 'background': trialStruct[curTrial].colorsPostChange[1] });
+          $('#circle3').css({ 'background': trialStruct[curTrial].colorsPostChange[2] });
+
+          // Show the keypress instructions
+          $('#instrucKeys').show();
+
+          // And start the timer on their RT:
+          var startRT = new Date();
+
+          /* Now, wait for a keypress: */
+          $(document).bind("keypress.respond", function (e) {
+            if (e.which == 122) { // if it is z...
+              trialStruct[curTrial].saidSame = 1;
+            }
+            if (e.which == 109) { // if it is m...
+              trialStruct[curTrial].saidSame = 0;
+            }
+            if (e.which == 122 || e.which == 109) { // if it is z or m:
+              $(document).unbind("keypress.respond"); // stop waiting for keys
+              $('#instrucKeys').hide();
+              trialStruct[curTrial].rt = (new Date()) - startRT; //record RT
+              curTrial++; //increase global trial counter
+
+              /* Either show the next trial, or, if we're done, show the done screen: */
+              if (curTrial < trialStruct.length) {
+                ShowTrial();
+              } else {
+                Done();
+              }
+            }
+          });
+        }, 5000);
+
+        /* 1s after the instructions show up, the colors disappear, even if they haven't responded: */
+        setTimeout(function () {
+          $('.circle').css({ 'background': 'none' });
+        }, 6000);
+      });
+    }
+
+    /* Done with the experiment; show them a comment box and wait for them to hit Save: */
+    function Done() {
+      $('#task').hide();
+      $('#done').show();
+    }
+
+    /* Save the data to the server (choose what to save): */
+    function SaveData() {
+      /* Hide everything in the 'done' div, and replace it with 'saving...': */
+      $('#done').children().hide();
+      $('#saving').show();
+
+      /* How long did they take to do the HIT, inclusive of reading instructions, etc? */
+      var newDate = new Date();
+      var totalTime = newDate - startExperimentTime;
+
+      /* What things to save: */
+      d = {
+        "assignmentId": AssignmentId,
+        "workerID": GetWorkerId(),
+        "curTime": newDate.today() + " @ " + newDate.timeNow(), //submission time
+        "userAgent": navigator.userAgent, //browser and version
+        "windowWidth": $(window).width(), //size of window HIT was completed in
+        "windowHeight": $(window).height(),
+        "screenWidth": screen.width, //size of their monitor
+        "screenHeight": screen.height,
+        "totalTime": totalTime,  // time it took to complete the HIT
+        "comments": $('#comments').val(), // their comments
+        "trialStruct": trialStruct //the trialStruct with all the data and conditions
+      };
+
+      var fileId = GetWorkerId() + "_" + AssignmentId;
+      SendToServer(fileId, d);
+    }
+
+    /* Send the data to the server as JSON: */
+    function SendToServer(id, curData) {
+      var dataToServer = {
+        'id': id, //filename to save the data with
+        'experimenter': experimenter, // experimenter folder to save it in
+        'experimentName': experimentName, //directory to save it in
+        'curData': JSON.stringify(curData) // data to save
+      };
+
+      /* Post the data to the server, using https:// or it will fail if run
+       from within Turk: */
+      $.post(server + "/turk/tools/save.php",
+        dataToServer,
+        // Whether the data gets saved or not, submit the form to Turk:
+        function (data) {
+          //console.log(data);
+          document.forms[0].submit();
+        }
+      ).fail(function (data) {
+        //console.log(data); 
+        document.forms[0].submit();
+      });
+    }
+  </script>
+</head>
+
+<body>
+
+  <!-- Wrap the entire experiment in a form. Always start the form with a hidden input for the
+		 Turk assignment ID that we'll fill in with their real assignment ID in Javascript -->
+  <!-- <form id="turkSubmit" action="https://www.mturk.com/mturk/externalSubmit" method="post" autocomplete="off"> -->
+  <form id="turkSubmit" action="https://workersandbox.mturk.com/mturk/externalSubmit" method="post" autocomplete="off">
+    <input type="hidden" name="assignmentId" id="assignmentId" value="">
+    <input type="submit" value="Submit" name="submitButton" id="submitButton" style="display: none">
+
+    <!-- For presenting trials (initially hidden): -->
+    <div id="task">
+      <div id="circle1" class="circle"></div>
+      <div id="circle2" class="circle"></div>
+      <div id="circle3" class="circle"></div>
+      <div id="fixation">+</div>
+      <div id="instrucKeys">'z' = colors were <b>same</b>, 'm' = a color was <b>different</b></div>
+      <div id="startTrial">press any key to start the next trial</div>
+    </div>
+
+    <!-- Standard post-experiment comment box (initially hidden): -->
+    <div id="done">
+      <div id="doneText">Done! Thanks!<br><br>Any comments for us? (Was it fun? Any technical
+        difficulties?)<br><br><textarea name="comments" id="comments"
+          style="width: 300px; height: 200px"></textarea><br><br>
+        <a href="javascript:SaveData()" id="timSubmit">Submit</a>
+      </div>
+      <div id="saving">Saving . . .</div>
+    </div>
+
+    <!-- Instructions: -->
+    <div id="instructions" class="instructionsDiv">
+      <p>This HIT will take approximately 7 minutes. You will have to remember some colors. You'll perform 48 trials of
+        the same task; each trial lasts about 3 seconds.<p>
+          <p>On each trial, you'll see a display like this:</p>
+          <p align="center"><img src="images/instruc0.png" width=300></p>
+          <p>Then some colors will briefly appear inside each of the three circles:</p>
+          <p align="center"><img src="images/instruc1.png" width=300></p>
+          <p>And then the colors will go away:</p>
+          <p align="center"><img src="images/instruc0.png" width=300></p>
+          <p>Then the circles might move, or might stay where they were. Either way, after a couple of seconds, the
+            circles will then get filled in with colors again. Your job is to say <b>whether they are the same
+              colors</b> or whether any of the colors is now different.</b></p>
+          <p>Where the colors appear <b>does not matter</b>. So, all three of these displays count as the <b>same</b>
+            colors:</p>
+          <p align="center"><img src="images/instruc1.png" width=180> <img src="images/instruc2.png" width=180> <img
+              src="images/instruc3.png" width=180></p>
+          <p>A display that is different will have exactly one color that is different than before, like this:</p>
+          <p align="center"><img src="images/instruc4.png" width=300></p>
+          <p>To respond, you'll use the 'z' and 'm' keys. If the colors are the same, you'll press 'z'. If they are
+            different, you'll press 'm'. This will be displayed for you on the screen so you don't have to remember it:
+          </p>
+          <p align="center"><img src="images/instruc5.png" width=300></p>
+          <p>We are studying <b>VISUAL</b> memory. So it is very important that you do not say the names of the colors
+            to yourself or use words to perform the task. In fact, to be sure you don't do this, we suggest you repeat
+            the word 'the' over and over in your head when the colors are presented. This will help you to remember not
+            to use words to remember the colors.</p>
+          <p>Please do your best! Remember, please <b>don't use words</b> to remember the colors.</p>
+
+          <div class="submitButtonTooltip" data-toggle='tooltip' data-placement='bottom'
+            title='please accept the hit first'>
+            <p style='text-align: center'><a href='javascript:StartExperiment()' class='startExperimentButton'>Start
+                Experiment</a></p>
+          </div>
+
+          <!-- Consent statement at bottom: -->
+          <div id='consentDiv'>
+            <p><u>Consent to Participate in Research:</u></p>
+            <p>By answering the following questions, you are participating in a study being performed by cognitive
+              scientists in the Harvard University Psychology Department. The purpose of this research is to examine
+              human visual performance.</p>
+            <p>By participating you are confirming that you are over 18 years of age and have normal or
+              corrected-to-normal vision.</p>
+            <p>If you have questions about this research, or if you would like to receive a report of this research when
+              it is completed please contact Timothy Brady at tbrady@wjh.harvard.edu.</p>
+            <p>Your participation in this research is completely voluntary. If you choose to participate, you may change
+              your mind and leave the study at any time. Refusal to participate or stopping your participation will
+              involve no penalty or loss of benefits to which you are otherwise entitled.</p>
+            <p>You may decline to answer any or all of the following questions. Your anonymity is assured; the
+              researchers who have requested your participation will not receive any personal information about you.
+            </p>
+            <p>For questions, concerns, or complaints that are not being addressed by the researcher, or
+              research-related harm contact: Committee on the Use of Human Subjects in Research at Harvard University,
+              1414 Massachusetts Avenue, Second Floor, Cambridge, MA 02138. Phone: 617-496-CUHS (2847). Email:
+              cuhs@fas.harvard.edu</p>
+            <p>By continuing, you are confirming that you understand these instructions and conditions of participation.
+            </p>
+          </div>
+    </div>
+
+  </form>
+</body>
+
+</html>
